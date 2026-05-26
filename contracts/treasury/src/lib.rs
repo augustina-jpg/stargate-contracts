@@ -3,7 +3,7 @@
 mod multisig;
 mod settlement;
 
-pub use multisig::{DataKey, Settlement, SettlementStatus};
+pub use multisig::{DataKey, Dispute, DisputeStatus, Settlement, SettlementStatus};
 
 use settlement::{approval_weight, require_authorized_signer};
 use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol, Vec};
@@ -21,6 +21,7 @@ impl TreasuryContract {
             .instance()
             .set(&DataKey::SettlementCount, &0u64);
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage().instance().set(&DataKey::DisputeCount, &0u64);
         env.storage()
             .instance()
             .set(&DataKey::Signer(admin.clone()), &1u32);
@@ -156,6 +157,65 @@ impl TreasuryContract {
     pub fn unpause(env: Env, admin: Address) {
         Self::require_admin(&env, &admin);
         env.storage().instance().set(&DataKey::Paused, &false);
+    }
+
+    pub fn raise_dispute(
+        env: Env,
+        claimant: Address,
+        settlement_id: u64,
+        counterparty: Address,
+        amount: i128,
+    ) -> u64 {
+        Self::require_not_paused(&env);
+        claimant.require_auth();
+        if amount <= 0 {
+            panic!("InvalidAmount");
+        }
+
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DisputeCount)
+            .unwrap_or(0);
+        let id = count + 1;
+        let dispute = Dispute {
+            id,
+            settlement_id,
+            claimant,
+            counterparty,
+            amount,
+            status: DisputeStatus::Raised,
+        };
+        env.storage().persistent().set(&DataKey::Dispute(id), &dispute);
+        env.storage().instance().set(&DataKey::DisputeCount, &id);
+        env.events()
+            .publish((Symbol::new(&env, "dispute_raised"), id), dispute);
+        id
+    }
+
+    pub fn resolve_dispute(env: Env, admin: Address, dispute_id: u64, in_favor_of_claimant: bool) {
+        Self::require_admin(&env, &admin);
+        Self::require_not_paused(&env);
+        let mut dispute: Dispute = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Dispute(dispute_id))
+            .unwrap();
+        if dispute.status != DisputeStatus::Raised {
+            panic!("DisputeAlreadyResolved");
+        }
+        dispute.status = if in_favor_of_claimant {
+            DisputeStatus::ResolvedClaimant
+        } else {
+            DisputeStatus::ResolvedCounterparty
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Dispute(dispute_id), &dispute);
+        env.events().publish(
+            (Symbol::new(&env, "dispute_resolved"), dispute_id),
+            dispute,
+        );
     }
 
     fn require_admin(env: &Env, admin: &Address) {
