@@ -19,3 +19,19 @@ jobs:
       - run: cargo clippy -- -D warnings
       - run: cargo test
       - run: cargo build --target wasm32-unknown-unknown --release
+
+  # Fail when committed abis/*.json drift from contract sources without an explicit update.
+  abi-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Detect ABI metadata drift
+        run: |
+          set -euo pipefail
+          scripts/generate_abi_metadata.sh /tmp/abis-regenerated
+          if ! diff -ru abis/ /tmp/abis-regenerated/; then
+            echo "::error::ABI metadata drift detected. Update abis/ with: scripts/generate_abi_metadata.sh"
+            exit 1
+          fi
