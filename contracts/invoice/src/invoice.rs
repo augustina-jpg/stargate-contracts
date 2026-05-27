@@ -9,6 +9,9 @@ pub enum InvoiceError {
     InvalidAmount = 3,
     NotPending = 4,
     Expired = 5,
+    AlreadyInitialized = 6,
+    ZeroDuration = 7,
+    ExpiryOverflow = 8,
 }
 
 #[contracttype]
