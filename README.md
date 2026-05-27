@@ -68,8 +68,27 @@ just check
 cargo fmt --all
 cargo clippy -- -D warnings
 cargo test
+make check-abi-snapshots
 ```
 
+## ABI snapshots
+
+Committed ABI metadata in `abis/` is generated from contract sources. Before opening a PR that changes contract behavior, refresh snapshots:
+
+```sh
+make update-abi-snapshots
+```
+
+Confirm the tree is clean:
+
+```sh
+make check-abi-snapshots
+git diff --exit-code abis/
+```
+
+The generator sets `LC_ALL=C` and `LANG=C` so output is identical across machines.
+
+See `CONTRIBUTING.md` for local pre-commit hooks.
 ## Coverage
 
 Generate coverage reports for contract tests:
@@ -100,6 +119,13 @@ See `docs/dev-environment.md` for full setup instructions.
 cp .env.testnet.example .env.testnet
 scripts/deploy_testnet.sh
 ```
+
+After deployment, contract IDs are exported to `artifacts/addresses.json` (gitignored; environment-specific). See `artifacts/addresses.json.example` for the schema:
+
+- `network`: Stellar network name (for example `testnet`)
+- `contracts[]`: `name` and deployed `address` for each contract
+
+Override the output path with `DEPLOYED_ADDRESSES_FILE` when calling `scripts/export_deployed_addresses.sh`.
 
 Mainnet deployment is intentionally manual and must go through multi-sig governance.
 
