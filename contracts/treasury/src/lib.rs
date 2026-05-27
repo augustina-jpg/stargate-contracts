@@ -3,6 +3,7 @@
 mod multisig;
 mod settlement;
 
+pub use multisig::{DataKey, Dispute, DisputeStatus, Settlement, SettlementStatus};
 pub use multisig::{DataKey, Settlement, SettlementStatus, TreasuryError};
 
 use settlement::{require_authorized_signer, signer_weight};
@@ -60,6 +61,7 @@ impl TreasuryContract {
             .instance()
             .set(&DataKey::SettlementCount, &0u64);
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage().instance().set(&DataKey::DisputeCount, &0u64);
         env.storage()
             .instance()
             .set(&DataKey::Signer(admin.clone()), &1u32);
@@ -223,6 +225,116 @@ impl TreasuryContract {
         env.storage().instance().set(&DataKey::Paused, &false);
         env.events()
             .publish((Symbol::new(&env, "treasury_unpaused"),), admin);
+    }
+
+    pub fn raise_dispute(
+        env: Env,
+        claimant: Address,
+        settlement_id: u64,
+        counterparty: Address,
+        amount: i128,
+    ) -> u64 {
+        Self::require_not_paused(&env);
+        claimant.require_auth();
+        if amount <= 0 {
+            panic!("InvalidAmount");
+        }
+
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DisputeCount)
+            .unwrap_or(0);
+        let id = count + 1;
+        let dispute = Dispute {
+            id,
+            settlement_id,
+            claimant,
+            counterparty,
+            amount,
+            status: DisputeStatus::Raised,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Dispute(id), &dispute);
+        env.storage().instance().set(&DataKey::DisputeCount, &id);
+        env.events()
+            .publish((Symbol::new(&env, "dispute_raised"), id), dispute);
+        id
+    }
+
+    pub fn resolve_dispute(env: Env, admin: Address, dispute_id: u64, in_favor_of_claimant: bool) {
+        Self::require_admin(&env, &admin);
+        Self::require_not_paused(&env);
+        let mut dispute: Dispute = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Dispute(dispute_id))
+            .unwrap();
+        if dispute.status != DisputeStatus::Raised {
+            panic!("DisputeAlreadyResolved");
+        }
+        dispute.status = if in_favor_of_claimant {
+            DisputeStatus::ResolvedClaimant
+        } else {
+            DisputeStatus::ResolvedCounterparty
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Dispute(dispute_id), &dispute);
+        env.events()
+            .publish((Symbol::new(&env, "dispute_resolved"), dispute_id), dispute);
+    }
+
+    pub fn deposit(env: Env, from: Address, token_contract: Address, amount: i128) {
+        Self::require_not_paused(&env);
+        from.require_auth();
+        if amount <= 0 {
+            panic!("InvalidAmount");
+        }
+
+        let treasury = env.current_contract_address();
+        let token_client = token::Client::new(&env, &token_contract);
+        token_client.transfer(&from, &treasury, &amount);
+
+        let mut balance: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Balance(from.clone()))
+            .unwrap_or(0);
+        balance += amount;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Balance(from.clone()), &balance);
+        env.events()
+            .publish((Symbol::new(&env, "deposit"), from), amount);
+    }
+
+    pub fn withdraw(env: Env, to: Address, token_contract: Address, amount: i128) {
+        Self::require_not_paused(&env);
+        to.require_auth();
+        if amount <= 0 {
+            panic!("InvalidAmount");
+        }
+
+        let mut balance: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Balance(to.clone()))
+            .unwrap_or(0);
+        if balance < amount {
+            panic!("InsufficientBalance");
+        }
+        balance -= amount;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Balance(to.clone()), &balance);
+
+        let treasury = env.current_contract_address();
+        let token_client = token::Client::new(&env, &token_contract);
+        token_client.transfer(&treasury, &to, &amount);
+        env.events()
+            .publish((Symbol::new(&env, "withdraw"), to), amount);
     }
 
     fn require_admin(env: &Env, admin: &Address) {

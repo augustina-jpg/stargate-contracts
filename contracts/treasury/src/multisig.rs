@@ -17,6 +17,14 @@ pub enum SettlementStatus {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DisputeStatus {
+    Raised,
+    ResolvedClaimant,
+    ResolvedCounterparty,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Settlement {
     pub id: u64,
     pub merchant_address: Address,
@@ -24,6 +32,17 @@ pub struct Settlement {
     pub approvals: Vec<Address>,
     pub approval_weight: u32,
     pub status: SettlementStatus,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Dispute {
+    pub id: u64,
+    pub settlement_id: u64,
+    pub claimant: Address,
+    pub counterparty: Address,
+    pub amount: i128,
+    pub status: DisputeStatus,
 }
 
 #[contracttype]
@@ -35,4 +54,7 @@ pub enum DataKey {
     Settlement(u64),
     Signer(Address),
     Paused,
+    DisputeCount,
+    Dispute(u64),
+    Balance(Address),
 }
