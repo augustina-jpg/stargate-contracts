@@ -153,11 +153,15 @@ impl TreasuryContract {
     pub fn pause(env: Env, admin: Address) {
         Self::require_admin(&env, &admin);
         env.storage().instance().set(&DataKey::Paused, &true);
+        env.events()
+            .publish((Symbol::new(&env, "treasury_paused"),), admin);
     }
 
     pub fn unpause(env: Env, admin: Address) {
         Self::require_admin(&env, &admin);
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.events()
+            .publish((Symbol::new(&env, "treasury_unpaused"),), admin);
     }
 
     fn require_admin(env: &Env, admin: &Address) {
