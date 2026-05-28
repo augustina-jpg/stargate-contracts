@@ -3,30 +3,16 @@
 mod multisig;
 mod settlement;
 
-pub use multisig::{DataKey, Dispute, DisputeStatus, Settlement, SettlementStatus};
-pub use multisig::{DataKey, Settlement, SettlementStatus, TreasuryError};
+pub use multisig::{DataKey, Dispute, DisputeStatus, Settlement, SettlementStatus, TreasuryError};
 
 use settlement::{require_authorized_signer, signer_weight};
 use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol, Vec};
 
-// Fix #13: typed error enum instead of panics on missing settlement IDs
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TreasuryError {
-    SettlementNotFound,
-    AlreadyExecuted,
-    ThresholdNotMet,
-    ThresholdNotConfigured,
-    InvalidAmount,
-    ContractPaused,
-    Unauthorized,
-    UnauthorizedSigner,
-    InvalidTokenContract,
-}
-
 impl TreasuryError {
     fn panic(&self) -> ! {
         match self {
+            TreasuryError::AlreadyInitialized => panic!("AlreadyInitialized"),
+            TreasuryError::ZeroThreshold => panic!("ZeroThreshold"),
             TreasuryError::SettlementNotFound => panic!("SettlementNotFound"),
             TreasuryError::AlreadyExecuted => panic!("AlreadyExecuted"),
             TreasuryError::ThresholdNotMet => panic!("ThresholdNotMet"),

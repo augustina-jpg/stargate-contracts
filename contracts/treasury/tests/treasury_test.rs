@@ -10,24 +10,17 @@ fn setup(env: &Env, threshold: u32) -> (TreasuryContractClient, Address, Address
     (client, admin, id)
 }
 
-// Original test — approvals accumulate until threshold
-#[test]
-fn approvals_accumulate_until_threshold() {
-fn setup() -> (Env, Address, Address, TreasuryContractClient<'static>) {
+fn setup_multisig() -> (Env, Address, Address, TreasuryContractClient<'static>) {
     let env = Env::default();
     let (client, admin, _) = setup(&env, 2);
     let backup = Address::generate(&env);
-    let merchant = Address::generate(&env);
-    let id = env.register_contract(None, TreasuryContract);
-    let client = TreasuryContractClient::new(&env, &id);
-    client.initialize(&admin, &2);
     client.set_signer(&admin, &backup, &1);
     (env, admin, backup, client)
 }
 
 #[test]
 fn approvals_accumulate_until_threshold() {
-    let (env, admin, backup, client) = setup();
+    let (env, admin, backup, client) = setup_multisig();
     let merchant = Address::generate(&env);
     let settlement_id = client.propose_settlement(&admin, &merchant, &10_000_000);
     let settlement = client.approve_settlement(&backup, &settlement_id);
@@ -52,9 +45,9 @@ fn approve_missing_settlement_returns_typed_error() {
 #[should_panic(expected = "SettlementNotFound")]
 fn execute_missing_settlement_returns_typed_error() {
     let env = Env::default();
-    let (client, _, _) = setup(&env, 2);
+    let (client, admin, _) = setup(&env, 2);
     let token = Address::generate(&env);
-    client.execute_settlement(&999, &token);
+    client.execute_settlement(&admin, &999, &token);
 }
 
 // Fix #15: weight snapshotted at approval time — changing weight after approval
@@ -84,7 +77,7 @@ fn execute_rejects_zero_threshold() {
     let merchant = Address::generate(&env);
     let token = Address::generate(&env);
     let sid = client.propose_settlement(&admin, &merchant, &10_000_000);
-    client.execute_settlement(&sid, &token);
+    client.execute_settlement(&admin, &sid, &token);
 }
 
 // Fix #17: execute should panic when token_contract is the treasury contract itself
@@ -193,13 +186,16 @@ fn dispute_resolved_in_favor_of_counterparty() {
     let dispute_id = client.raise_dispute(&claimant, &settlement_id, &merchant, &5_000_000);
 
     client.resolve_dispute(&admin, &dispute_id, &false);
+}
+
+#[test]
 #[should_panic(expected = "InvalidTokenContract")]
 fn execute_rejects_self_as_token_contract() {
     let env = Env::default();
     let (client, admin, contract_id) = setup(&env, 1);
     let merchant = Address::generate(&env);
     let sid = client.propose_settlement(&admin, &merchant, &10_000_000);
-    client.execute_settlement(&sid, &contract_id);
+    client.execute_settlement(&admin, &sid, &contract_id);
 }
 
 #[test]
@@ -216,8 +212,11 @@ fn pause_and_unpause_emit_events() {
     // after unpause, proposals work again
     let settlement_id = client.propose_settlement(&admin, &merchant, &1_000);
     assert_eq!(settlement_id, 1);
+}
+
+#[test]
 fn execute_settlement_requires_authorized_signer() {
-    let (env, admin, backup, client) = setup();
+    let (env, admin, backup, client) = setup_multisig();
     let merchant = Address::generate(&env);
     let rogue = Address::generate(&env);
     let settlement_id = client.propose_settlement(&admin, &merchant, &10_000_000);

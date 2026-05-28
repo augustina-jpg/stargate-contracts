@@ -6,6 +6,15 @@ use soroban_sdk::{contracterror, contracttype, Address, Vec};
 pub enum TreasuryError {
     AlreadyInitialized = 1,
     ZeroThreshold = 2,
+    SettlementNotFound = 3,
+    AlreadyExecuted = 4,
+    ThresholdNotMet = 5,
+    ThresholdNotConfigured = 6,
+    InvalidAmount = 7,
+    ContractPaused = 8,
+    Unauthorized = 9,
+    UnauthorizedSigner = 10,
+    InvalidTokenContract = 11,
 }
 
 #[contracttype]

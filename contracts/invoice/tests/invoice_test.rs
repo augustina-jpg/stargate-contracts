@@ -145,6 +145,8 @@ fn test_payment_before_expiry_succeeds() {
     client.mark_paid(&admin, &id, &payer);
     let invoice = client.get_invoice(&id).unwrap();
     assert_eq!(invoice.status, InvoiceStatus::Paid);
+}
+
 // Issue #1: initialize requires admin auth
 #[test]
 fn test_initialize_requires_admin_auth() {
@@ -187,6 +189,8 @@ fn test_expiry_overflow_rejected() {
     assert!(client
         .try_create_invoice(&merchant, &10_000_000, &10_250_000, &1)
         .is_err());
+}
+
 #[test]
 fn test_event_stream_redis_webhook_compatibility() {
     // Validates that contract events emitted are compatible with Redis webhook delivery.

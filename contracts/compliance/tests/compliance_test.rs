@@ -156,6 +156,9 @@ fn read_only_queries_not_blocked_by_pause() {
 
     let unrelated_address = Address::generate(&env);
     assert!(!client.is_allowed(&unrelated_address));
+}
+
+#[test]
 fn unpause_emits_event_and_restores_allow() {
     let env = Env::default();
     env.mock_all_auths();
@@ -168,6 +171,8 @@ fn unpause_emits_event_and_restores_allow() {
     client.unpause(&admin);
     client.allow_address(&admin, &payer);
     assert!(client.is_allowed(&payer));
+}
+
 // Verification: address_allowed event schema
 // - topics[0]: symbol "address_allowed"
 // - data: single Address value for the allowed address
