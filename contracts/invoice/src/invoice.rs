@@ -26,6 +26,13 @@ pub enum InvoiceStatus {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MaybePayer {
+    None,
+    Some(Address),
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Invoice {
     pub id: u64,
     pub merchant: Address,
@@ -34,7 +41,7 @@ pub struct Invoice {
     pub status: InvoiceStatus,
     pub expires_at: u64,
     pub paid_at: Option<u64>,
-    pub payer: Option<Address>,
+    pub payer: MaybePayer,
 }
 
 #[contracttype]

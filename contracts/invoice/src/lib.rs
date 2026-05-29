@@ -4,7 +4,7 @@ mod events;
 mod invoice;
 mod validation;
 
-pub use invoice::{DataKey, Invoice, InvoiceError, InvoiceStatus};
+pub use invoice::{DataKey, Invoice, InvoiceError, InvoiceStatus, MaybePayer};
 
 use soroban_sdk::{contract, contractimpl, Address, Env};
 use validation::{require_admin, require_not_paused, require_positive_amount};
@@ -59,7 +59,7 @@ impl InvoiceContract {
             status: InvoiceStatus::Pending,
             expires_at,
             paid_at: None,
-            payer: None,
+            payer: MaybePayer::None,
         };
 
         env.storage()
@@ -99,7 +99,7 @@ impl InvoiceContract {
 
         invoice.status = InvoiceStatus::Paid;
         invoice.paid_at = Some(env.ledger().timestamp());
-        invoice.payer = Some(payer);
+        invoice.payer = MaybePayer::Some(payer);
         env.storage()
             .persistent()
             .set(&DataKey::Invoice(id), &invoice);

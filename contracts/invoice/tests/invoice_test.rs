@@ -91,7 +91,10 @@ fn test_get_invoice_unknown_id_returns_not_found() {
 fn test_mark_paid_unknown_id_returns_not_found() {
     let (env, admin, client) = setup();
     let payer = Address::generate(&env);
-    let err = client.try_mark_paid(&admin, &999, &payer).unwrap_err().unwrap();
+    let err = client
+        .try_mark_paid(&admin, &999, &payer)
+        .unwrap_err()
+        .unwrap();
     assert_eq!(err, InvoiceError::NotFound);
 }
 
@@ -104,7 +107,7 @@ fn test_payer_set_after_payment() {
     let id = client.create_invoice(&merchant, &10_000_000, &10_250_000, &3600);
     client.mark_paid(&admin, &id, &payer);
     let invoice = client.get_invoice(&id).unwrap();
-    assert_eq!(invoice.payer, Some(payer));
+    assert_eq!(invoice.payer, MaybePayer::Some(payer));
 }
 
 // Issue #7: expired event emitted when mark_paid finds stale invoice
@@ -130,7 +133,10 @@ fn test_payment_at_exact_expiry_is_rejected() {
     // expires_in_seconds=10, ledger starts at 0, so expires_at=10
     let id = client.create_invoice(&merchant, &10_000_000, &10_250_000, &10);
     env.ledger().with_mut(|ledger| ledger.timestamp = 10);
-    let err = client.try_mark_paid(&admin, &id, &payer).unwrap_err().unwrap();
+    let err = client
+        .try_mark_paid(&admin, &id, &payer)
+        .unwrap_err()
+        .unwrap();
     assert_eq!(err, InvoiceError::Expired);
 }
 
