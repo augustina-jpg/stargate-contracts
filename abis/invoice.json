@@ -9,5 +9,5 @@
     "pause",
     "unpause"
   ],
-  "events": ["invoice_created", "invoice_paid", "contract_paused", "contract_unpaused"]
+  "events": ["invoice_created", "invoice_paid", "invoice_expired", "contract_paused", "contract_unpaused"]
 }
