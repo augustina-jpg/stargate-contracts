@@ -9,6 +9,7 @@ pub use multisig::{
 };
 
 use settlement::{require_authorized_signer, signer_weight};
+use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol, Vec};
 use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol, Vec};
 
 
@@ -166,6 +167,26 @@ impl TreasuryContract {
             .set(&DataKey::Settlement(settlement_id), &settlement);
         env.events().publish(
             (Symbol::new(&env, "settlement_executed"), settlement_id),
+            settlement,
+        );
+    }
+
+    pub fn cancel_settlement(env: Env, admin: Address, settlement_id: u64) {
+        Self::require_admin(&env, &admin);
+        let mut settlement: Settlement = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Settlement(settlement_id))
+            .unwrap_or_else(|| panic!("SettlementNotFound"));
+        if settlement.status != SettlementStatus::Pending {
+            panic!("AlreadyExecuted");
+        }
+        settlement.status = SettlementStatus::Cancelled;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Settlement(settlement_id), &settlement);
+        env.events().publish(
+            (Symbol::new(&env, "settlement_cancelled"), settlement_id),
             settlement,
         );
     }

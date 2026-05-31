@@ -35,6 +35,7 @@ pub enum SettlementStatus {
     Pending,
     Executed,
     OnHold,
+    Cancelled,
 }
 
 #[contracttype]
