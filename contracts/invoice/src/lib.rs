@@ -4,9 +4,10 @@ mod events;
 mod invoice;
 mod validation;
 
+pub use invoice::{DataKey, Invoice, InvoiceError, InvoiceStatus, MaybeAddress, MaybeBytes};
 pub use invoice::{DataKey, Invoice, InvoiceError, InvoiceStatus, MaybeAddress};
 
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sdk::{contract, contractimpl, Address, Env, Vec};
 use validation::{require_admin, require_not_paused, require_positive_amount};
 
 #[contract]
@@ -31,6 +32,8 @@ impl InvoiceContract {
         amount_usdc: i128,
         gross_usdc: i128,
         expires_in_seconds: u64,
+        metadata_hash: MaybeBytes,
+        payment_link_hash: MaybeBytes,
     ) -> Result<u64, InvoiceError> {
         merchant.require_auth();
         require_not_paused(&env)?;
@@ -60,6 +63,8 @@ impl InvoiceContract {
             expires_at,
             paid_at: None,
             payer: MaybeAddress::None,
+            metadata_hash,
+            payment_link_hash,
         };
 
         env.storage()
@@ -114,6 +119,8 @@ impl InvoiceContract {
             .ok_or(InvoiceError::NotFound)
     }
 
+    pub fn get_invoice_status(env: Env, id: u64) -> Result<InvoiceStatus, InvoiceError> {
+        let invoice: Invoice = env
     // Issue #49: merchant or admin may cancel a pending invoice
     pub fn cancel_invoice(env: Env, caller: Address, id: u64) -> Result<(), InvoiceError> {
         caller.require_auth();
@@ -124,6 +131,25 @@ impl InvoiceContract {
             .persistent()
             .get(&DataKey::Invoice(id))
             .ok_or(InvoiceError::NotFound)?;
+        Ok(invoice.status)
+    }
+
+    pub fn batch_expire(env: Env, admin: Address, ids: Vec<u64>) -> Result<u32, InvoiceError> {
+        require_admin(&env, &admin)?;
+        let now = env.ledger().timestamp();
+        let mut expired_count: u32 = 0;
+        for id in ids.iter() {
+            let key = DataKey::Invoice(id);
+            if let Some(mut invoice) = env.storage().persistent().get::<DataKey, Invoice>(&key) {
+                if invoice.status == InvoiceStatus::Pending && now >= invoice.expires_at {
+                    invoice.status = InvoiceStatus::Expired;
+                    env.storage().persistent().set(&key, &invoice);
+                    events::invoice_expired(&env, id, &invoice);
+                    expired_count += 1;
+                }
+            }
+        }
+        Ok(expired_count)
 
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         if caller != invoice.merchant && caller != admin {
