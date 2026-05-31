@@ -119,6 +119,17 @@ impl TreasuryContract {
         id
     }
 
+    pub fn propose_partial_settlement(
+        env: Env,
+        signer: Address,
+        merchant_address: Address,
+        amount: i128,
+    ) -> u64 {
+        // Wrapper entrypoint for proposing partial settlements. Behavior currently identical to propose_settlement.
+        // Kept as a separate entrypoint to expose intent in the contract ABI without changing storage layout.
+        Self::propose_settlement(env, signer, merchant_address, amount)
+    }
+
     pub fn approve_settlement(env: Env, signer: Address, settlement_id: u64) -> Settlement {
         Self::require_not_paused(&env);
         require_authorized_signer(&env, &signer);
@@ -141,6 +152,39 @@ impl TreasuryContract {
             .set(&DataKey::Settlement(settlement_id), &settlement);
         env.events().publish(
             (Symbol::new(&env, "settlement_approved"), settlement_id),
+            settlement.clone(),
+        );
+        settlement
+    }
+
+    pub fn approve_partial_settlement(
+        env: Env,
+        signer: Address,
+        settlement_id: u64,
+        partial_amount: i128,
+    ) -> Settlement {
+        Self::require_not_paused(&env);
+        require_authorized_signer(&env, &signer);
+        let mut settlement: Settlement = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Settlement(settlement_id))
+            .unwrap_or_else(|| panic!("SettlementNotFound"));
+        if settlement.status != SettlementStatus::Pending {
+            panic!("AlreadyExecuted");
+        }
+        if partial_amount <= 0 || partial_amount >= settlement.amount {
+            panic!("InvalidAmount");
+        }
+        if !settlement.approvals.contains(&signer) {
+            settlement.approval_weight += signer_weight(&env, &signer);
+            settlement.approvals.push_back(signer);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::Settlement(settlement_id), &settlement);
+        env.events().publish(
+            (Symbol::new(&env, "settlement_partial_approved"), settlement_id),
             settlement.clone(),
         );
         settlement
