@@ -173,6 +173,14 @@ fn unpause_emits_event_and_restores_allow() {
     assert!(client.is_allowed(&payer));
 }
 
+#[test]
+#[should_panic(expected = "AlreadyInitialized")]
+fn reinitialize_is_rejected() {
+    let (env, _admin, _subject, client) = setup();
+    let attacker = Address::generate(&env);
+    client.initialize(&attacker);
+}
+
 // Verification: address_allowed event schema
 // - topics[0]: symbol "address_allowed"
 // - data: single Address value for the allowed address
