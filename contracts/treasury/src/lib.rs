@@ -241,6 +241,19 @@ impl TreasuryContract {
         if amount <= 0 {
             panic!("InvalidAmount");
         }
+        // #34: place the referenced settlement on hold
+        if let Some(mut settlement) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Settlement>(&DataKey::Settlement(settlement_id))
+        {
+            if settlement.status == SettlementStatus::Pending {
+                settlement.status = SettlementStatus::OnHold;
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Settlement(settlement_id), &settlement);
+            }
+        }
 
         let count: u64 = env
             .storage()
@@ -255,6 +268,9 @@ impl TreasuryContract {
             counterparty,
             amount,
             status: DisputeStatus::Raised,
+            resolution_approvals: Vec::new(&env),
+            resolution_weight: 0,
+            resolution_for_claimant: false,
         };
         env.storage()
             .persistent()
@@ -286,6 +302,124 @@ impl TreasuryContract {
             .set(&DataKey::Dispute(dispute_id), &dispute);
         env.events()
             .publish((Symbol::new(&env, "dispute_resolved"), dispute_id), dispute);
+    }
+
+    // #35: multisig approval for dispute resolution
+    pub fn vote_dispute_resolution(
+        env: Env,
+        signer: Address,
+        dispute_id: u64,
+        in_favor_of_claimant: bool,
+    ) {
+        Self::require_not_paused(&env);
+        require_authorized_signer(&env, &signer);
+        let mut dispute: Dispute = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Dispute(dispute_id))
+            .unwrap_or_else(|| panic!("DisputeNotFound"));
+        if dispute.status != DisputeStatus::Raised {
+            panic!("DisputeAlreadyResolved");
+        }
+        // First vote sets the resolution direction; subsequent votes must match
+        if dispute.resolution_weight == 0 {
+            dispute.resolution_for_claimant = in_favor_of_claimant;
+        } else if dispute.resolution_for_claimant != in_favor_of_claimant {
+            panic!("ResolutionDirectionMismatch");
+        }
+        if !dispute.resolution_approvals.contains(&signer) {
+            dispute.resolution_weight += signer_weight(&env, &signer);
+            dispute.resolution_approvals.push_back(signer);
+        }
+        let threshold: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Threshold)
+            .unwrap_or_else(|| panic!("ThresholdNotConfigured"));
+        if dispute.resolution_weight >= threshold {
+            dispute.status = if dispute.resolution_for_claimant {
+                DisputeStatus::ResolvedClaimant
+            } else {
+                DisputeStatus::ResolvedCounterparty
+            };
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::Dispute(dispute_id), &dispute);
+        env.events().publish(
+            (Symbol::new(&env, "dispute_resolution_voted"), dispute_id),
+            dispute,
+        );
+    }
+
+    // #36: cancel a pending settlement before execution
+    pub fn cancel_settlement(env: Env, signer: Address, settlement_id: u64) {
+        Self::require_not_paused(&env);
+        require_authorized_signer(&env, &signer);
+        let mut settlement: Settlement = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Settlement(settlement_id))
+            .unwrap_or_else(|| panic!("SettlementNotFound"));
+        if settlement.status != SettlementStatus::Pending {
+            panic!("SettlementNotCancellable");
+        }
+        settlement.status = SettlementStatus::Cancelled;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Settlement(settlement_id), &settlement);
+        env.events().publish(
+            (Symbol::new(&env, "settlement_cancelled"), settlement_id),
+            settlement,
+        );
+    }
+
+    // #33: transfer a partial amount and mark the settlement as PartiallyExecuted
+    pub fn partially_execute_settlement(
+        env: Env,
+        signer: Address,
+        settlement_id: u64,
+        partial_amount: i128,
+        token_contract: Address,
+    ) {
+        Self::require_not_paused(&env);
+        require_authorized_signer(&env, &signer);
+        let mut settlement: Settlement = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Settlement(settlement_id))
+            .unwrap_or_else(|| panic!("SettlementNotFound"));
+        if settlement.status != SettlementStatus::Pending {
+            panic!("AlreadyExecuted");
+        }
+        if partial_amount <= 0 || partial_amount >= settlement.amount {
+            panic!("InvalidAmount");
+        }
+        let threshold: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Threshold)
+            .unwrap_or_else(|| panic!("ThresholdNotConfigured"));
+        if threshold == 0 {
+            panic!("ThresholdNotConfigured");
+        }
+        if settlement.approval_weight < threshold {
+            panic!("ThresholdNotMet");
+        }
+        if token_contract == env.current_contract_address() {
+            panic!("InvalidTokenContract");
+        }
+        let treasury = env.current_contract_address();
+        let token_client = token::Client::new(&env, &token_contract);
+        token_client.transfer(&treasury, &settlement.merchant_address, &partial_amount);
+        settlement.status = SettlementStatus::PartiallyExecuted;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Settlement(settlement_id), &settlement);
+        env.events().publish(
+            (Symbol::new(&env, "settlement_partial_executed"), settlement_id),
+            settlement,
+        );
     }
 
     pub fn deposit(env: Env, from: Address, token_contract: Address, amount: i128) {
