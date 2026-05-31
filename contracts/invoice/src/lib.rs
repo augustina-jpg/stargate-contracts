@@ -4,9 +4,7 @@ mod events;
 mod invoice;
 mod validation;
 
-pub use invoice::{DataKey, Invoice, InvoiceError, InvoiceStatus, OptionalAddress};
 pub use invoice::{DataKey, Invoice, InvoiceError, InvoiceStatus, MaybeAddress, MaybeBytes};
-pub use invoice::{DataKey, Invoice, InvoiceError, InvoiceStatus, MaybeAddress};
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Vec};
 use validation::{require_admin, require_not_paused, require_positive_amount};
@@ -63,7 +61,6 @@ impl InvoiceContract {
             status: InvoiceStatus::Pending,
             expires_at,
             paid_at: None,
-            payer: OptionalAddress::None,
             payer: MaybeAddress::None,
             metadata_hash,
             payment_link_hash,
@@ -101,7 +98,6 @@ impl InvoiceContract {
 
         invoice.status = InvoiceStatus::Paid;
         invoice.paid_at = Some(env.ledger().timestamp());
-        invoice.payer = OptionalAddress::Some(payer);
         invoice.payer = MaybeAddress::Some(payer);
         env.storage()
             .persistent()
@@ -119,6 +115,13 @@ impl InvoiceContract {
 
     pub fn get_invoice_status(env: Env, id: u64) -> Result<InvoiceStatus, InvoiceError> {
         let invoice: Invoice = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Invoice(id))
+            .ok_or(InvoiceError::NotFound)?;
+        Ok(invoice.status)
+    }
+
     // Issue #49: merchant or admin may cancel a pending invoice
     pub fn cancel_invoice(env: Env, caller: Address, id: u64) -> Result<(), InvoiceError> {
         caller.require_auth();
@@ -129,7 +132,21 @@ impl InvoiceContract {
             .persistent()
             .get(&DataKey::Invoice(id))
             .ok_or(InvoiceError::NotFound)?;
-        Ok(invoice.status)
+
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        if caller != invoice.merchant && caller != admin {
+            return Err(InvoiceError::Unauthorized);
+        }
+        if invoice.status != InvoiceStatus::Pending {
+            return Err(InvoiceError::NotPending);
+        }
+
+        invoice.status = InvoiceStatus::Cancelled;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Invoice(id), &invoice);
+        events::invoice_cancelled(&env, id, &invoice);
+        Ok(())
     }
 
     pub fn batch_expire(env: Env, admin: Address, ids: Vec<u64>) -> Result<u32, InvoiceError> {
@@ -148,21 +165,6 @@ impl InvoiceContract {
             }
         }
         Ok(expired_count)
-
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        if caller != invoice.merchant && caller != admin {
-            return Err(InvoiceError::Unauthorized);
-        }
-        if invoice.status != InvoiceStatus::Pending {
-            return Err(InvoiceError::NotPending);
-        }
-
-        invoice.status = InvoiceStatus::Cancelled;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Invoice(id), &invoice);
-        events::invoice_cancelled(&env, id, &invoice);
-        Ok(())
     }
 
     // Issue #50: payer may request a refund on a paid invoice (escrow dispute)

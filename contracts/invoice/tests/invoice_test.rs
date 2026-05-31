@@ -1,5 +1,4 @@
 use invoice::{
-    InvoiceContract, InvoiceContractClient, InvoiceError, InvoiceStatus, OptionalAddress,
     InvoiceContract, InvoiceContractClient, InvoiceError, InvoiceStatus, MaybeAddress, MaybeBytes,
 };
 use soroban_sdk::{
@@ -21,8 +20,6 @@ fn setup() -> (Env, Address, InvoiceContractClient<'static>) {
 fn test_create_invoice_succeeds() {
     let (env, _admin, client) = setup();
     let merchant = Address::generate(&env);
-    let id = client.create_invoice(&merchant, &10_000_000, &10_250_000, &3600);
-    let invoice = client.get_invoice(&id);
     let id = client.create_invoice(
         &merchant,
         &10_000_000,
@@ -36,8 +33,6 @@ fn test_create_invoice_succeeds() {
     assert_eq!(invoice.status, InvoiceStatus::Pending);
     assert_eq!(invoice.amount_usdc, 10_000_000);
     assert_eq!(invoice.gross_usdc, 10_250_000);
-    // Issue #6: payer is None before payment
-    assert_eq!(invoice.payer, OptionalAddress::None);
     assert_eq!(invoice.payer, MaybeAddress::None);
 }
 
@@ -161,8 +156,6 @@ fn test_payer_set_after_payment() {
         &MaybeBytes::None,
     );
     client.mark_paid(&admin, &id, &payer);
-    let invoice = client.get_invoice(&id);
-    assert_eq!(invoice.payer, OptionalAddress::Some(payer));
     let invoice = client.get_invoice(&id).unwrap();
     assert_eq!(invoice.payer, MaybeAddress::Some(payer));
 }
@@ -188,7 +181,7 @@ fn test_expired_event_emitted_on_stale_mark_paid() {
         .unwrap();
     assert_eq!(err, InvoiceError::Expired);
     // Storage is rolled back on error; invoice remains Pending
-    let invoice = client.get_invoice(&id);
+    let invoice = client.get_invoice(&id).unwrap();
     assert_eq!(invoice.status, InvoiceStatus::Pending);
 }
 
@@ -231,7 +224,7 @@ fn test_payment_before_expiry_succeeds() {
     );
     env.ledger().with_mut(|ledger| ledger.timestamp = 9);
     client.mark_paid(&admin, &id, &payer);
-    let invoice = client.get_invoice(&id);
+    let invoice = client.get_invoice(&id).unwrap();
     assert_eq!(invoice.status, InvoiceStatus::Paid);
 }
 
@@ -320,19 +313,18 @@ fn test_event_stream_redis_webhook_compatibility() {
     );
 
     // Verify the invoice can be retrieved (validates event data was properly stored)
-    let invoice = client.get_invoice(&invoice_id);
+    let invoice = client.get_invoice(&invoice_id).unwrap();
     assert_eq!(invoice.id, 1);
     assert_eq!(invoice.merchant, merchant);
     assert_eq!(invoice.amount_usdc, 10_000_000);
     assert_eq!(invoice.gross_usdc, 10_250_000);
     assert_eq!(invoice.status, InvoiceStatus::Pending);
-    assert_eq!(invoice.payer, OptionalAddress::None);
+    assert_eq!(invoice.payer, MaybeAddress::None);
 
     // Verify payment event data
     client.mark_paid(&admin, &invoice_id, &payer);
-    let paid_invoice = client.get_invoice(&invoice_id);
+    let paid_invoice = client.get_invoice(&invoice_id).unwrap();
     assert_eq!(paid_invoice.status, InvoiceStatus::Paid);
-    assert_eq!(paid_invoice.payer, OptionalAddress::Some(payer));
     assert_eq!(paid_invoice.payer, MaybeAddress::Some(payer));
     assert!(paid_invoice.paid_at.is_some());
 
