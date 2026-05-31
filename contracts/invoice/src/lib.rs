@@ -4,6 +4,7 @@ mod events;
 mod invoice;
 mod validation;
 
+pub use invoice::{DataKey, Invoice, InvoiceError, InvoiceStatus, OptionalAddress};
 pub use invoice::{DataKey, Invoice, InvoiceError, InvoiceStatus, MaybeAddress, MaybeBytes};
 pub use invoice::{DataKey, Invoice, InvoiceError, InvoiceStatus, MaybeAddress};
 
@@ -62,6 +63,7 @@ impl InvoiceContract {
             status: InvoiceStatus::Pending,
             expires_at,
             paid_at: None,
+            payer: OptionalAddress::None,
             payer: MaybeAddress::None,
             metadata_hash,
             payment_link_hash,
@@ -94,16 +96,12 @@ impl InvoiceContract {
             return Err(InvoiceError::NotPending);
         }
         if env.ledger().timestamp() >= invoice.expires_at {
-            invoice.status = InvoiceStatus::Expired;
-            env.storage()
-                .persistent()
-                .set(&DataKey::Invoice(id), &invoice);
-            events::invoice_expired(&env, id, &invoice);
             return Err(InvoiceError::Expired);
         }
 
         invoice.status = InvoiceStatus::Paid;
         invoice.paid_at = Some(env.ledger().timestamp());
+        invoice.payer = OptionalAddress::Some(payer);
         invoice.payer = MaybeAddress::Some(payer);
         env.storage()
             .persistent()
