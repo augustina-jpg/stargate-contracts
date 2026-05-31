@@ -6,8 +6,8 @@ mod settlement;
 pub use multisig::{DataKey, Dispute, DisputeStatus, Settlement, SettlementStatus, TreasuryError};
 
 use settlement::{require_authorized_signer, signer_weight};
-use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol, Vec};
 use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol, Vec};
 
 impl TreasuryError {
     fn panic(&self) -> ! {
@@ -132,7 +132,12 @@ impl TreasuryContract {
         settlement
     }
 
-    pub fn execute_settlement(env: Env, signer: Address, settlement_id: u64, token_contract: Address) {
+    pub fn execute_settlement(
+        env: Env,
+        signer: Address,
+        settlement_id: u64,
+        token_contract: Address,
+    ) {
         Self::require_not_paused(&env);
         // Fix #13: return typed error instead of unwrap panic
         require_authorized_signer(&env, &signer);
@@ -172,6 +177,26 @@ impl TreasuryContract {
             .set(&DataKey::Settlement(settlement_id), &settlement);
         env.events().publish(
             (Symbol::new(&env, "settlement_executed"), settlement_id),
+            settlement,
+        );
+    }
+
+    pub fn cancel_settlement(env: Env, admin: Address, settlement_id: u64) {
+        Self::require_admin(&env, &admin);
+        let mut settlement: Settlement = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Settlement(settlement_id))
+            .unwrap_or_else(|| panic!("SettlementNotFound"));
+        if settlement.status != SettlementStatus::Pending {
+            panic!("AlreadyExecuted");
+        }
+        settlement.status = SettlementStatus::Cancelled;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Settlement(settlement_id), &settlement);
+        env.events().publish(
+            (Symbol::new(&env, "settlement_cancelled"), settlement_id),
             settlement,
         );
     }

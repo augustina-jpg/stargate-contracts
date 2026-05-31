@@ -1,4 +1,4 @@
-use compliance::{ComplianceContract, ComplianceContractClient};
+use compliance::{ComplianceContract, ComplianceContractClient, ContractError};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 fn setup() -> (Env, Address, Address, ComplianceContractClient<'static>) {
@@ -171,6 +171,14 @@ fn unpause_emits_event_and_restores_allow() {
     client.unpause(&admin);
     client.allow_address(&admin, &payer);
     assert!(client.is_allowed(&payer));
+}
+
+#[test]
+#[should_panic(expected = "AlreadyInitialized")]
+fn reinitialize_is_rejected() {
+    let (env, _admin, _subject, client) = setup();
+    let attacker = Address::generate(&env);
+    client.initialize(&attacker);
 }
 
 // Verification: address_allowed event schema
@@ -402,4 +410,32 @@ fn admin_transfer_wrong_acceptor_panics() {
         client.accept_admin(&impostor);
     });
     assert!(result.is_err());
+#[test]
+fn allow_address_returns_unauthorized_for_non_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let address = Address::generate(&env);
+    let id = env.register_contract(None, ComplianceContract);
+    let client = ComplianceContractClient::new(&env, &id);
+    client.initialize(&admin);
+
+    let result = client.try_allow_address(&non_admin, &address);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn allow_address_returns_contract_paused_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let address = Address::generate(&env);
+    let id = env.register_contract(None, ComplianceContract);
+    let client = ComplianceContractClient::new(&env, &id);
+    client.initialize(&admin);
+    client.pause(&admin);
+
+    let result = client.try_allow_address(&admin, &address);
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
 }
