@@ -33,12 +33,26 @@ impl ComplianceContract {
             .persistent()
             .get(&DataKey::Blocked(address.clone()))
             .unwrap_or(false);
+        if blocked {
+            return false;
+        }
         let allowed: bool = env
             .storage()
             .persistent()
-            .get(&DataKey::Allowed(address))
+            .get(&DataKey::Allowed(address.clone()))
             .unwrap_or(false);
-        allowed && !blocked
+        if !allowed {
+            return false;
+        }
+        // Check optional expiry
+        if let Some(expires_at) = env
+            .storage()
+            .persistent()
+            .get::<_, u64>(&DataKey::AllowedUntil(address))
+        {
+            return env.ledger().timestamp() < expires_at;
+        }
+        true
     }
 
     pub fn allow_address(env: Env, admin: Address, address: Address) -> Result<(), ContractError> {
@@ -64,6 +78,50 @@ impl ComplianceContract {
         Ok(())
     }
 
+    /// Allow an address until a specific ledger timestamp (seconds since epoch).
+    /// After expiry, `is_allowed` returns false even if the Allowed flag is set.
+    pub fn allow_address_until(env: Env, admin: Address, address: Address, expires_at: u64) {
+        Self::require_admin(&env, &admin);
+        Self::require_not_paused(&env);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Allowed(address.clone()), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AllowedUntil(address.clone()), &expires_at);
+        env.events()
+            .publish((Symbol::new(&env, "address_allowed_until"),), (address, expires_at));
+    }
+
+    /// Initiate a two-step admin transfer. The pending admin must call accept_admin.
+    pub fn transfer_admin(env: Env, admin: Address, new_admin: Address) {
+        Self::require_admin(&env, &admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
+        env.events()
+            .publish((Symbol::new(&env, "admin_transfer_initiated"),), new_admin);
+    }
+
+    /// Complete the admin transfer. Must be called by the pending admin.
+    pub fn accept_admin(env: Env, new_admin: Address) {
+        new_admin.require_auth();
+        let pending: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .expect("NoPendingAdmin");
+        if pending != new_admin {
+            panic!("Unauthorized");
+        }
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+        env.events()
+            .publish((Symbol::new(&env, "admin_transferred"),), new_admin);
+    }
+
+    pub fn clear_address(env: Env, admin: Address, address: Address) {
+        Self::require_admin(&env, &admin);
     pub fn clear_address(env: Env, admin: Address, address: Address) -> Result<(), ContractError> {
         Self::require_admin(&env, &admin)?;
         env.storage()
