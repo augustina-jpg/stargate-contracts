@@ -4,6 +4,33 @@ mod multisig;
 mod settlement;
 
 pub use multisig::{
+    DataKey, Dispute, DisputeStatus, RotationStatus, Settlement, SettlementStatus,
+    SignerRotationProposal, TreasuryError,
+};
+
+use settlement::{require_authorized_signer, signer_weight};
+use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol, Vec};
+
+impl TreasuryError {
+    fn panic(&self) -> ! {
+        match self {
+            TreasuryError::AlreadyInitialized => panic!("AlreadyInitialized"),
+            TreasuryError::ZeroThreshold => panic!("ZeroThreshold"),
+            TreasuryError::SettlementNotFound => panic!("SettlementNotFound"),
+            TreasuryError::AlreadyExecuted => panic!("AlreadyExecuted"),
+            TreasuryError::ThresholdNotMet => panic!("ThresholdNotMet"),
+            TreasuryError::ThresholdNotConfigured => panic!("ThresholdNotConfigured"),
+            TreasuryError::InvalidAmount => panic!("InvalidAmount"),
+            TreasuryError::ContractPaused => panic!("ContractPaused"),
+            TreasuryError::Unauthorized => panic!("Unauthorized"),
+            TreasuryError::UnauthorizedSigner => panic!("UnauthorizedSigner"),
+            TreasuryError::InvalidTokenContract => panic!("InvalidTokenContract"),
+            TreasuryError::TokenNotAllowed => panic!("TokenNotAllowed"),
+            TreasuryError::RotationNotFound => panic!("RotationNotFound"),
+            TreasuryError::RotationAlreadyExecuted => panic!("RotationAlreadyExecuted"),
+        }
+    }
+}
     DataKey, Dispute, DisputeStatus, Settlement, SettlementHoldReason, SettlementStatus,
     TreasuryError,
 };
@@ -152,11 +179,17 @@ impl TreasuryContract {
         if settlement.approval_weight < threshold {
             panic!("ThresholdNotMet");
         }
-        // Fix #17: validate token contract is a registered signer or non-zero address
-        // by attempting a balance check — if the address is not a valid token contract
-        // the call will trap; instead we validate it is not the zero/contract address itself
         if token_contract == env.current_contract_address() {
             panic!("InvalidTokenContract");
+        }
+        // Enforce token allowlist when one has been configured
+        let allowlist: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenAllowlist)
+            .unwrap_or_else(|| Vec::new(&env));
+        if !allowlist.is_empty() && !allowlist.contains(&token_contract) {
+            panic!("TokenNotAllowed");
         }
         let treasury = env.current_contract_address();
         let token_client = token::Client::new(&env, &token_contract);
@@ -473,6 +506,159 @@ impl TreasuryContract {
             .publish((Symbol::new(&env, "withdraw"), to), amount);
     }
 
+    // Issue #43: read-only getter for a single settlement
+    pub fn get_settlement(env: Env, settlement_id: u64) -> Settlement {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Settlement(settlement_id))
+            .unwrap_or_else(|| panic!("SettlementNotFound"))
+    }
+
+    // Issue #41: governance entrypoint to update the approval threshold
+    pub fn update_threshold(
+        env: Env,
+        admin: Address,
+        new_threshold: u32,
+    ) -> Result<(), TreasuryError> {
+        Self::require_admin(&env, &admin);
+        if new_threshold == 0 {
+            return Err(TreasuryError::ZeroThreshold);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::Threshold, &new_threshold);
+        env.events()
+            .publish((Symbol::new(&env, "threshold_updated"),), new_threshold);
+        Ok(())
+    }
+
+    // Issue #40: allowlist management — add a token
+    pub fn add_allowed_token(env: Env, admin: Address, token: Address) {
+        Self::require_admin(&env, &admin);
+        let mut allowlist: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenAllowlist)
+            .unwrap_or_else(|| Vec::new(&env));
+        if !allowlist.contains(&token) {
+            allowlist.push_back(token.clone());
+            env.storage()
+                .instance()
+                .set(&DataKey::TokenAllowlist, &allowlist);
+            env.events()
+                .publish((Symbol::new(&env, "token_allowed"),), token);
+        }
+    }
+
+    // Issue #40: allowlist management — remove a token
+    pub fn remove_allowed_token(env: Env, admin: Address, token: Address) {
+        Self::require_admin(&env, &admin);
+        let allowlist: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenAllowlist)
+            .unwrap_or_else(|| Vec::new(&env));
+        let mut updated = Vec::new(&env);
+        for t in allowlist.iter() {
+            if t != token {
+                updated.push_back(t);
+            }
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::TokenAllowlist, &updated);
+        env.events()
+            .publish((Symbol::new(&env, "token_removed"),), token);
+    }
+
+    // Issue #40: read allowed tokens
+    pub fn get_allowed_tokens(env: Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&DataKey::TokenAllowlist)
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    // Issue #42: propose rotating a signer (old_signer -> new_signer)
+    pub fn propose_signer_rotation(
+        env: Env,
+        proposer: Address,
+        old_signer: Address,
+        new_signer: Address,
+    ) -> u64 {
+        require_authorized_signer(&env, &proposer);
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::RotationCount)
+            .unwrap_or(0);
+        let id = count + 1;
+        let weight = signer_weight(&env, &proposer);
+        let mut approvals = Vec::new(&env);
+        approvals.push_back(proposer);
+        let proposal = SignerRotationProposal {
+            id,
+            old_signer,
+            new_signer,
+            approvals,
+            approval_weight: weight,
+            status: RotationStatus::Pending,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::SignerRotation(id), &proposal);
+        env.storage().instance().set(&DataKey::RotationCount, &id);
+        env.events()
+            .publish((Symbol::new(&env, "rotation_proposed"), id), proposal);
+        id
+    }
+
+    // Issue #42: approve (and auto-execute when threshold met) a signer rotation
+    pub fn approve_signer_rotation(
+        env: Env,
+        approver: Address,
+        rotation_id: u64,
+    ) -> SignerRotationProposal {
+        require_authorized_signer(&env, &approver);
+        let mut proposal: SignerRotationProposal = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SignerRotation(rotation_id))
+            .unwrap_or_else(|| panic!("RotationNotFound"));
+        if proposal.status != RotationStatus::Pending {
+            panic!("RotationAlreadyExecuted");
+        }
+        if !proposal.approvals.contains(&approver) {
+            proposal.approval_weight += signer_weight(&env, &approver);
+            proposal.approvals.push_back(approver);
+        }
+        let threshold: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Threshold)
+            .unwrap_or(1);
+        if proposal.approval_weight >= threshold {
+            let old_weight = signer_weight(&env, &proposal.old_signer);
+            env.storage()
+                .instance()
+                .set(&DataKey::Signer(proposal.new_signer.clone()), &old_weight);
+            env.storage()
+                .instance()
+                .set(&DataKey::Signer(proposal.old_signer.clone()), &0u32);
+            proposal.status = RotationStatus::Executed;
+            env.events().publish(
+                (Symbol::new(&env, "rotation_executed"), rotation_id),
+                proposal.clone(),
+            );
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::SignerRotation(rotation_id), &proposal);
+        env.events().publish(
+            (Symbol::new(&env, "rotation_approved"), rotation_id),
+            proposal.clone(),
+        );
+        proposal
     // Issue #47: merchant payout address update workflow
     pub fn update_merchant_payout_address(
         env: Env,
