@@ -18,6 +18,18 @@ pub enum TreasuryError {
     TokenNotAllowed = 12,
     RotationNotFound = 13,
     RotationAlreadyExecuted = 14,
+    SettlementOnHold = 12,
+}
+
+// Issue #48: reason codes attached to a held settlement; None means not on hold
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SettlementHoldReason {
+    None,
+    ComplianceReview,
+    FraudCheck,
+    KycPending,
+    AdminHold,
 }
 
 #[contracttype]
@@ -25,6 +37,9 @@ pub enum TreasuryError {
 pub enum SettlementStatus {
     Pending,
     Executed,
+    PartiallyExecuted,
+    OnHold,
+    Cancelled,
 }
 
 #[contracttype]
@@ -44,6 +59,7 @@ pub struct Settlement {
     pub approvals: Vec<Address>,
     pub approval_weight: u32,
     pub status: SettlementStatus,
+    pub hold_reason: SettlementHoldReason,
 }
 
 #[contracttype]
@@ -55,6 +71,9 @@ pub struct Dispute {
     pub counterparty: Address,
     pub amount: i128,
     pub status: DisputeStatus,
+    pub resolution_approvals: Vec<Address>,
+    pub resolution_weight: u32,
+    pub resolution_for_claimant: bool,
 }
 
 #[contracttype]
@@ -90,4 +109,5 @@ pub enum DataKey {
     TokenAllowlist,
     RotationCount,
     SignerRotation(u64),
+    MerchantPayoutAddress(Address),
 }
