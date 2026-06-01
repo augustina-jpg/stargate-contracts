@@ -132,6 +132,8 @@ impl TreasuryContract {
             .storage()
             .persistent()
             .get(&DataKey::Settlement(settlement_id))
+            .unwrap();
+        if settlement.status == SettlementStatus::Executed {
             .unwrap_or_else(|| panic!("SettlementNotFound"));
         if settlement.status != SettlementStatus::Pending {
             panic!("AlreadyExecuted");
@@ -163,6 +165,8 @@ impl TreasuryContract {
             .storage()
             .persistent()
             .get(&DataKey::Settlement(settlement_id))
+            .unwrap();
+        if settlement.status == SettlementStatus::Executed {
             .unwrap_or_else(|| panic!("SettlementNotFound"));
         if settlement.status != SettlementStatus::Pending {
             panic!("AlreadyExecuted");
@@ -250,12 +254,39 @@ impl TreasuryContract {
         );
     }
 
+    pub fn partial_settle(
+        env: Env,
+        settlement_id: u64,
+        partial_amount: i128,
+        token_contract: Address,
+    ) -> Settlement {
+        Self::require_not_paused(&env);
     pub fn cancel_settlement(env: Env, admin: Address, settlement_id: u64) {
         Self::require_admin(&env, &admin);
         let mut settlement: Settlement = env
             .storage()
             .persistent()
             .get(&DataKey::Settlement(settlement_id))
+            .unwrap();
+        if settlement.status == SettlementStatus::Executed {
+            panic!("AlreadyExecuted");
+        }
+        if partial_amount <= 0 || partial_amount > settlement.amount {
+            panic!("InvalidPartialAmount");
+        }
+        let threshold: u32 = env.storage().instance().get(&DataKey::Threshold).unwrap();
+        if approval_weight(&env, &settlement) < threshold {
+            panic!("ThresholdNotMet");
+        }
+        let treasury = env.current_contract_address();
+        let token_client = token::Client::new(&env, &token_contract);
+        token_client.transfer(&treasury, &settlement.merchant_address, &partial_amount);
+        settlement.amount -= partial_amount;
+        settlement.status = if settlement.amount == 0 {
+            SettlementStatus::Executed
+        } else {
+            SettlementStatus::PartiallySettled
+        };
             .unwrap_or_else(|| panic!("SettlementNotFound"));
         if settlement.status != SettlementStatus::Pending {
             panic!("AlreadyExecuted");
@@ -265,6 +296,10 @@ impl TreasuryContract {
             .persistent()
             .set(&DataKey::Settlement(settlement_id), &settlement);
         env.events().publish(
+            (Symbol::new(&env, "settlement_partial"), settlement_id),
+            settlement.clone(),
+        );
+        settlement
             (Symbol::new(&env, "settlement_cancelled"), settlement_id),
             settlement,
         );
@@ -283,6 +318,10 @@ impl TreasuryContract {
             if let Some(settlement) = env
                 .storage()
                 .persistent()
+                .get(&DataKey::Settlement(id))
+                .unwrap();
+            if settlement.status != SettlementStatus::Executed {
+                pending.push_back(settlement);
                 .get::<DataKey, Settlement>(&DataKey::Settlement(id))
             {
                 if settlement.status == SettlementStatus::Pending {

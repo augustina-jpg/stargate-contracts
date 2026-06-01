@@ -162,6 +162,7 @@ impl ComplianceContract {
         Ok(())
     }
 
+    fn require_not_paused(env: &Env) {
     fn require_not_paused(env: &Env) -> Result<(), ContractError> {
         let paused: bool = env
             .storage()

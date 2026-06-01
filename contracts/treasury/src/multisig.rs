@@ -37,6 +37,7 @@ pub enum SettlementHoldReason {
 pub enum SettlementStatus {
     Pending,
     Executed,
+    PartiallySettled,
     PartiallyExecuted,
     OnHold,
     Cancelled,
