@@ -367,6 +367,8 @@ fn test_abi_snapshot_matches_contract() {
                 && !s.contains('[')
                 && !s.contains(']')
                 && !s.trim().starts_with(',')
+                && !s.trim().starts_with(',')
+                && !s.contains(']')
         })
         .collect();
 
@@ -383,6 +385,8 @@ fn test_abi_snapshot_matches_contract() {
                 && !s.contains('[')
                 && !s.contains(']')
                 && !s.trim().starts_with(',')
+                && !s.trim().starts_with(',')
+                && !s.contains(']')
         })
         .collect();
 
@@ -443,6 +447,13 @@ fn test_mark_paid_blocked_when_paused() {
     let (env, admin, client) = setup();
     let merchant = Address::generate(&env);
     let payer = Address::generate(&env);
+// Issue #91: e2e happy path — create invoice, admin marks paid, assert Paid status and payer recorded
+#[test]
+fn test_invoice_create_to_paid_escrow_flow() {
+    let (env, admin, client) = setup();
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+
     let id = client.create_invoice(
         &merchant,
         &10_000_000,
@@ -454,4 +465,19 @@ fn test_mark_paid_blocked_when_paused() {
     client.pause(&admin);
     let result = client.try_mark_paid(&admin, &id, &payer);
     assert!(result.is_err(), "mark_paid must be blocked when paused");
+
+    let invoice = client.get_invoice(&id);
+    assert_eq!(invoice.status, InvoiceStatus::Pending);
+    assert_eq!(invoice.merchant, merchant);
+
+    // admin marks the invoice as paid, recording the payer
+    client.mark_paid(&admin, &id, &payer);
+
+    let paid = client.get_invoice(&id);
+    assert_eq!(paid.status, InvoiceStatus::Paid);
+    assert_eq!(paid.payer, MaybeAddress::Some(payer));
+    assert!(
+        paid.paid_at.is_some(),
+        "paid_at must be set after mark_paid"
+    );
 }
