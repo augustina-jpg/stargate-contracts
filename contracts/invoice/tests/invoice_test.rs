@@ -295,6 +295,10 @@ fn test_event_stream_redis_webhook_compatibility() {
         &MaybeBytes::None,
     );
 
+test/invoice-payment-expiry-boundary
+    // Verify the invoice can be retrieved (validates event data was properly stored)
+ main
+    let invoice = client.get_invoice(&invoice_id).unwrap();
     let invoice = client.get_invoice(&invoice_id);
     assert_eq!(invoice.id, 1);
     assert_eq!(invoice.merchant, merchant);
