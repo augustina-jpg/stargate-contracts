@@ -447,6 +447,11 @@ fn test_mark_paid_blocked_when_paused() {
     let (env, admin, client) = setup();
     let merchant = Address::generate(&env);
     let payer = Address::generate(&env);
+// Issue #92: e2e flow — create invoice, advance ledger past deadline, run batch_expire, assert Expired
+#[test]
+fn test_invoice_create_to_expired_flow() {
+    let (env, admin, client) = setup();
+    let merchant = Address::generate(&env);
 // Issue #91: e2e happy path — create invoice, admin marks paid, assert Paid status and payer recorded
 #[test]
 fn test_invoice_create_to_paid_escrow_flow() {
@@ -468,6 +473,21 @@ fn test_invoice_create_to_paid_escrow_flow() {
 
     let invoice = client.get_invoice(&id);
     assert_eq!(invoice.status, InvoiceStatus::Pending);
+
+    // advance ledger past the invoice deadline
+    env.ledger().with_mut(|li| {
+        li.timestamp = invoice.expires_at + 1;
+    });
+
+    let ids = soroban_sdk::vec![&env, id];
+    let expired_count = client.batch_expire(&admin, &ids);
+    assert_eq!(
+        expired_count, 1,
+        "batch_expire should mark one invoice as expired"
+    );
+
+    let invoice = client.get_invoice(&id);
+    assert_eq!(invoice.status, InvoiceStatus::Expired);
     assert_eq!(invoice.merchant, merchant);
 
     // admin marks the invoice as paid, recording the payer
