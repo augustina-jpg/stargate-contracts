@@ -5,6 +5,7 @@ use soroban_sdk::{contracttype, Address, Vec};
 pub enum SettlementStatus {
     Pending,
     Executed,
+    PartiallySettled,
 }
 
 #[contracttype]

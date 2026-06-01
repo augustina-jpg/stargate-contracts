@@ -16,7 +16,9 @@ impl TreasuryContract {
     pub fn initialize(env: Env, admin: Address, threshold: u32) {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::Threshold, &threshold);
+        env.storage()
+            .instance()
+            .set(&DataKey::Threshold, &threshold);
         env.storage()
             .instance()
             .set(&DataKey::SettlementCount, &0u64);
@@ -67,9 +69,7 @@ impl TreasuryContract {
         env.storage()
             .persistent()
             .set(&DataKey::Settlement(id), &settlement);
-        env.storage()
-            .instance()
-            .set(&DataKey::SettlementCount, &id);
+        env.storage().instance().set(&DataKey::SettlementCount, &id);
         env.events()
             .publish((Symbol::new(&env, "settlement_proposed"), id), settlement);
         id
@@ -83,7 +83,7 @@ impl TreasuryContract {
             .persistent()
             .get(&DataKey::Settlement(settlement_id))
             .unwrap();
-        if settlement.status != SettlementStatus::Pending {
+        if settlement.status == SettlementStatus::Executed {
             panic!("AlreadyExecuted");
         }
         if !settlement.approvals.contains(&signer) {
@@ -106,7 +106,7 @@ impl TreasuryContract {
             .persistent()
             .get(&DataKey::Settlement(settlement_id))
             .unwrap();
-        if settlement.status != SettlementStatus::Pending {
+        if settlement.status == SettlementStatus::Executed {
             panic!("AlreadyExecuted");
         }
         let threshold: u32 = env.storage().instance().get(&DataKey::Threshold).unwrap();
@@ -126,6 +126,47 @@ impl TreasuryContract {
         );
     }
 
+    pub fn partial_settle(
+        env: Env,
+        settlement_id: u64,
+        partial_amount: i128,
+        token_contract: Address,
+    ) -> Settlement {
+        Self::require_not_paused(&env);
+        let mut settlement: Settlement = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Settlement(settlement_id))
+            .unwrap();
+        if settlement.status == SettlementStatus::Executed {
+            panic!("AlreadyExecuted");
+        }
+        if partial_amount <= 0 || partial_amount > settlement.amount {
+            panic!("InvalidPartialAmount");
+        }
+        let threshold: u32 = env.storage().instance().get(&DataKey::Threshold).unwrap();
+        if approval_weight(&env, &settlement) < threshold {
+            panic!("ThresholdNotMet");
+        }
+        let treasury = env.current_contract_address();
+        let token_client = token::Client::new(&env, &token_contract);
+        token_client.transfer(&treasury, &settlement.merchant_address, &partial_amount);
+        settlement.amount -= partial_amount;
+        settlement.status = if settlement.amount == 0 {
+            SettlementStatus::Executed
+        } else {
+            SettlementStatus::PartiallySettled
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Settlement(settlement_id), &settlement);
+        env.events().publish(
+            (Symbol::new(&env, "settlement_partial"), settlement_id),
+            settlement.clone(),
+        );
+        settlement
+    }
+
     pub fn get_pending_settlements(env: Env) -> Vec<Settlement> {
         let count: u64 = env
             .storage()
@@ -140,7 +181,7 @@ impl TreasuryContract {
                 .persistent()
                 .get(&DataKey::Settlement(id))
                 .unwrap();
-            if settlement.status == SettlementStatus::Pending {
+            if settlement.status != SettlementStatus::Executed {
                 pending.push_back(settlement);
             }
             id += 1;
@@ -167,7 +208,11 @@ impl TreasuryContract {
     }
 
     fn require_not_paused(env: &Env) {
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        let paused: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false);
         if paused {
             panic!("ContractPaused");
         }
