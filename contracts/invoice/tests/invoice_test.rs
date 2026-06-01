@@ -421,6 +421,32 @@ fn test_abi_snapshot_matches_contract() {
     );
 }
 
+// Issue #93: create_invoice is rejected when the contract is paused
+#[test]
+fn test_create_invoice_blocked_when_paused() {
+    let (env, admin, client) = setup();
+    let merchant = Address::generate(&env);
+    client.pause(&admin);
+    let result = client.try_create_invoice(
+        &merchant,
+        &10_000_000,
+        &10_250_000,
+        &3600,
+        &MaybeBytes::None,
+        &MaybeBytes::None,
+    );
+    assert!(
+        result.is_err(),
+        "create_invoice must be blocked when paused"
+    );
+}
+
+// Issue #93: mark_paid is rejected when the contract is paused
+#[test]
+fn test_mark_paid_blocked_when_paused() {
+    let (env, admin, client) = setup();
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
 // Issue #94: create_invoice must enforce merchant authorization.
 // Uses cancel_invoice (which has an explicit Unauthorized check) to prove that a
 // non-merchant/non-admin caller is rejected. Also verifies that the merchant's auth
@@ -450,6 +476,9 @@ fn test_invoice_create_to_paid_escrow_flow() {
         &MaybeBytes::None,
         &MaybeBytes::None,
     );
+    client.pause(&admin);
+    let result = client.try_mark_paid(&admin, &id, &payer);
+    assert!(result.is_err(), "mark_paid must be blocked when paused");
 
     // Confirm create_invoice required merchant authorization
     let auths = env.auths();
