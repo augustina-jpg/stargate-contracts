@@ -333,6 +333,13 @@ impl TreasuryContract {
         pending
     }
 
+    pub fn update_threshold(env: Env, admin: Address, new_threshold: u32) {
+        Self::require_admin(&env, &admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::Threshold, &new_threshold);
+        env.events()
+            .publish((Symbol::new(&env, "threshold_updated"),), new_threshold);
     pub fn get_pending_settlements_page(env: Env, start: u64, limit: u64) -> Vec<Settlement> {
         let count: u64 = env
             .storage()
