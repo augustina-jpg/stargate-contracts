@@ -123,11 +123,7 @@ impl InvoiceContract {
         Ok(invoice.status)
     }
 
-test/invoice-payment-expiry-boundary
     // Issue #49: merchant or admin may cancel a pending invoice
-
-    // merchant or admin may cancel a pending invoice
- main
     pub fn cancel_invoice(env: Env, caller: Address, id: u64) -> Result<(), InvoiceError> {
         caller.require_auth();
         require_not_paused(&env)?;
@@ -152,7 +148,6 @@ test/invoice-payment-expiry-boundary
             .set(&DataKey::Invoice(id), &invoice);
         events::invoice_cancelled(&env, id, &invoice);
         Ok(())
- test/invoice-payment-expiry-boundary
     }
 
     pub fn batch_expire(env: Env, admin: Address, ids: Vec<u64>) -> Result<u32, InvoiceError> {
@@ -171,8 +166,6 @@ test/invoice-payment-expiry-boundary
             }
         }
         Ok(expired_count)
-
- main
     }
 
     // payer may request a refund on a paid invoice (escrow dispute)
