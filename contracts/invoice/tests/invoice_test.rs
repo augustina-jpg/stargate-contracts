@@ -295,10 +295,6 @@ fn test_event_stream_redis_webhook_compatibility() {
         &MaybeBytes::None,
     );
 
-test/invoice-payment-expiry-boundary
-    // Verify the invoice can be retrieved (validates event data was properly stored)
- main
-    let invoice = client.get_invoice(&invoice_id).unwrap();
     let invoice = client.get_invoice(&invoice_id);
     assert_eq!(invoice.id, 1);
     assert_eq!(invoice.merchant, merchant);
@@ -315,6 +311,78 @@ test/invoice-payment-expiry-boundary
 
     client.pause(&admin);
     client.unpause(&admin);
+}
+
+#[test]
+fn test_cancel_invoice_transitions_to_cancelled() {
+    let (env, _admin, client) = setup();
+    let merchant = Address::generate(&env);
+    let invoice_id = client.create_invoice(
+        &merchant,
+        &10_000_000,
+        &10_250_000,
+        &3600,
+        &MaybeBytes::None,
+        &MaybeBytes::None,
+    );
+
+    client.cancel_invoice(&merchant, &invoice_id);
+
+    let invoice = client.get_invoice(&invoice_id);
+    assert_eq!(invoice.status, InvoiceStatus::Cancelled);
+    assert_eq!(
+        client.get_invoice_status(&invoice_id).unwrap(),
+        InvoiceStatus::Cancelled
+    );
+}
+
+#[test]
+fn test_cancelled_invoice_cannot_be_marked_paid() {
+    let (env, admin, client) = setup();
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let invoice_id = client.create_invoice(
+        &merchant,
+        &10_000_000,
+        &10_250_000,
+        &3600,
+        &MaybeBytes::None,
+        &MaybeBytes::None,
+    );
+
+    client.cancel_invoice(&merchant, &invoice_id);
+    let err = client
+        .try_mark_paid(&admin, &invoice_id, &payer)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, InvoiceError::NotPending);
+
+    let invoice = client.get_invoice(&invoice_id);
+    assert_eq!(invoice.status, InvoiceStatus::Cancelled);
+}
+
+#[test]
+fn test_cancel_invoice_unauthorized_rejected() {
+    let (env, _admin, client) = setup();
+    let merchant = Address::generate(&env);
+    let unauthorized = Address::generate(&env);
+    let id = client.create_invoice(
+        &merchant,
+        &10_000_000,
+        &10_250_000,
+        &3600,
+        &MaybeBytes::None,
+        &MaybeBytes::None,
+    );
+
+    let err = client
+        .try_cancel_invoice(&unauthorized, &id)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, InvoiceError::Unauthorized);
+
+    let invoice = client.get_invoice(&id);
+    assert_eq!(invoice.status, InvoiceStatus::Pending);
 }
 
 // ABI snapshot comparison: asserts abis/invoice.json stays in sync with the
@@ -451,6 +519,19 @@ fn test_mark_paid_blocked_when_paused() {
     let (env, admin, client) = setup();
     let merchant = Address::generate(&env);
     let payer = Address::generate(&env);
+    let id = client.create_invoice(
+        &merchant,
+        &10_000_000,
+        &10_250_000,
+        &3600,
+        &MaybeBytes::None,
+        &MaybeBytes::None,
+    );
+    client.pause(&admin);
+    let result = client.try_mark_paid(&admin, &id, &payer);
+    assert!(result.is_err(), "mark_paid must be blocked when paused");
+}
+
 // Issue #94: create_invoice must enforce merchant authorization.
 // Uses cancel_invoice (which has an explicit Unauthorized check) to prove that a
 // non-merchant/non-admin caller is rejected. Also verifies that the merchant's auth
@@ -460,11 +541,66 @@ fn test_create_invoice_unauthorized_merchant() {
     let (env, _admin, client) = setup();
     let merchant = Address::generate(&env);
     let unauthorized = Address::generate(&env);
+    let id = client.create_invoice(
+        &merchant,
+        &10_000_000,
+        &10_250_000,
+        &3600,
+        &MaybeBytes::None,
+        &MaybeBytes::None,
+    );
+
+    let auths = env.auths();
+    assert!(
+        auths.iter().any(|(addr, _)| addr == &merchant),
+        "create_invoice must require merchant authorization"
+    );
+
+    let err = client
+        .try_cancel_invoice(&unauthorized, &id)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(
+        err,
+        InvoiceError::Unauthorized,
+        "Expected Unauthorized for non-merchant non-admin caller"
+    );
+
+    let invoice = client.get_invoice(&id);
+    assert_eq!(invoice.status, InvoiceStatus::Pending);
+}
+
 // Issue #92: e2e flow — create invoice, advance ledger past deadline, run batch_expire, assert Expired
 #[test]
 fn test_invoice_create_to_expired_flow() {
     let (env, admin, client) = setup();
     let merchant = Address::generate(&env);
+
+    let id = client.create_invoice(
+        &merchant,
+        &10_000_000,
+        &10_250_000,
+        &3600,
+        &MaybeBytes::None,
+        &MaybeBytes::None,
+    );
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = client.get_invoice(&id).expires_at + 1;
+    });
+
+    let ids = soroban_sdk::vec![&env, id];
+    let expired_count = client.batch_expire(&admin, &ids);
+    assert_eq!(
+        expired_count, 1,
+        "batch_expire should mark one invoice as expired"
+    );
+
+    let invoice = client.get_invoice(&id);
+    assert_eq!(invoice.status, InvoiceStatus::Expired);
+    assert_eq!(invoice.merchant, merchant);
+}
+
 // Issue #91: e2e happy path — create invoice, admin marks paid, assert Paid status and payer recorded
 #[test]
 fn test_invoice_create_to_paid_escrow_flow() {
@@ -480,46 +616,7 @@ fn test_invoice_create_to_paid_escrow_flow() {
         &MaybeBytes::None,
         &MaybeBytes::None,
     );
-    client.pause(&admin);
-    let result = client.try_mark_paid(&admin, &id, &payer);
-    assert!(result.is_err(), "mark_paid must be blocked when paused");
 
-    // Confirm create_invoice required merchant authorization
-    let auths = env.auths();
-    assert!(
-        auths.iter().any(|(addr, _)| addr == &merchant),
-        "create_invoice must require merchant authorization"
-    );
-
-    // An unauthorized address is rejected when attempting to manage the invoice
-    let err = client
-        .try_cancel_invoice(&unauthorized, &id)
-        .unwrap_err()
-        .unwrap();
-    assert_eq!(
-        err,
-        InvoiceError::Unauthorized,
-        "Expected Unauthorized for non-merchant non-admin caller"
-    let invoice = client.get_invoice(&id);
-    assert_eq!(invoice.status, InvoiceStatus::Pending);
-
-    // advance ledger past the invoice deadline
-    env.ledger().with_mut(|li| {
-        li.timestamp = invoice.expires_at + 1;
-    });
-
-    let ids = soroban_sdk::vec![&env, id];
-    let expired_count = client.batch_expire(&admin, &ids);
-    assert_eq!(
-        expired_count, 1,
-        "batch_expire should mark one invoice as expired"
-    );
-
-    let invoice = client.get_invoice(&id);
-    assert_eq!(invoice.status, InvoiceStatus::Expired);
-    assert_eq!(invoice.merchant, merchant);
-
-    // admin marks the invoice as paid, recording the payer
     client.mark_paid(&admin, &id, &payer);
 
     let paid = client.get_invoice(&id);
