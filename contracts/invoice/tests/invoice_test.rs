@@ -367,6 +367,8 @@ fn test_abi_snapshot_matches_contract() {
                 && !s.contains('[')
                 && !s.contains(']')
                 && !s.trim().starts_with(',')
+                && !s.trim().starts_with(',')
+                && !s.contains(']')
         })
         .collect();
 
@@ -383,6 +385,8 @@ fn test_abi_snapshot_matches_contract() {
                 && !s.contains('[')
                 && !s.contains(']')
                 && !s.trim().starts_with(',')
+                && !s.trim().starts_with(',')
+                && !s.contains(']')
         })
         .collect();
 
@@ -426,6 +430,12 @@ fn test_create_invoice_unauthorized_merchant() {
     let (env, _admin, client) = setup();
     let merchant = Address::generate(&env);
     let unauthorized = Address::generate(&env);
+// Issue #91: e2e happy path — create invoice, admin marks paid, assert Paid status and payer recorded
+#[test]
+fn test_invoice_create_to_paid_escrow_flow() {
+    let (env, admin, client) = setup();
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
 
     let id = client.create_invoice(
         &merchant,
@@ -452,5 +462,18 @@ fn test_create_invoice_unauthorized_merchant() {
         err,
         InvoiceError::Unauthorized,
         "Expected Unauthorized for non-merchant non-admin caller"
+    let invoice = client.get_invoice(&id);
+    assert_eq!(invoice.status, InvoiceStatus::Pending);
+    assert_eq!(invoice.merchant, merchant);
+
+    // admin marks the invoice as paid, recording the payer
+    client.mark_paid(&admin, &id, &payer);
+
+    let paid = client.get_invoice(&id);
+    assert_eq!(paid.status, InvoiceStatus::Paid);
+    assert_eq!(paid.payer, MaybeAddress::Some(payer));
+    assert!(
+        paid.paid_at.is_some(),
+        "paid_at must be set after mark_paid"
     );
 }
