@@ -4,7 +4,7 @@ mod multisig;
 mod settlement;
 
 pub use multisig::{
-    DataKey, Dispute, DisputeStatus, RotationStatus, Settlement, SettlementStatus,
+    DataKey, Dispute, DisputeStatus, RotationStatus, Settlement, SettlementHoldReason, SettlementStatus,
     SignerRotationProposal, TreasuryError,
 };
 
@@ -28,11 +28,10 @@ impl TreasuryError {
             TreasuryError::TokenNotAllowed => panic!("TokenNotAllowed"),
             TreasuryError::RotationNotFound => panic!("RotationNotFound"),
             TreasuryError::RotationAlreadyExecuted => panic!("RotationAlreadyExecuted"),
+            TreasuryError::SettlementOnHold => panic!("SettlementOnHold"),
         }
     }
 }
-
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol, Vec};
 
 #[contract]
 pub struct TreasuryContract;
@@ -132,8 +131,6 @@ impl TreasuryContract {
             .storage()
             .persistent()
             .get(&DataKey::Settlement(settlement_id))
-            .unwrap();
-        if settlement.status == SettlementStatus::Executed {
             .unwrap_or_else(|| panic!("SettlementNotFound"));
         if settlement.status != SettlementStatus::Pending {
             panic!("AlreadyExecuted");
@@ -165,8 +162,6 @@ impl TreasuryContract {
             .storage()
             .persistent()
             .get(&DataKey::Settlement(settlement_id))
-            .unwrap();
-        if settlement.status == SettlementStatus::Executed {
             .unwrap_or_else(|| panic!("SettlementNotFound"));
         if settlement.status != SettlementStatus::Pending {
             panic!("AlreadyExecuted");
@@ -254,57 +249,6 @@ impl TreasuryContract {
         );
     }
 
-    pub fn partial_settle(
-        env: Env,
-        settlement_id: u64,
-        partial_amount: i128,
-        token_contract: Address,
-    ) -> Settlement {
-        Self::require_not_paused(&env);
-    pub fn cancel_settlement(env: Env, admin: Address, settlement_id: u64) {
-        Self::require_admin(&env, &admin);
-        let mut settlement: Settlement = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Settlement(settlement_id))
-            .unwrap();
-        if settlement.status == SettlementStatus::Executed {
-            panic!("AlreadyExecuted");
-        }
-        if partial_amount <= 0 || partial_amount > settlement.amount {
-            panic!("InvalidPartialAmount");
-        }
-        let threshold: u32 = env.storage().instance().get(&DataKey::Threshold).unwrap();
-        if approval_weight(&env, &settlement) < threshold {
-            panic!("ThresholdNotMet");
-        }
-        let treasury = env.current_contract_address();
-        let token_client = token::Client::new(&env, &token_contract);
-        token_client.transfer(&treasury, &settlement.merchant_address, &partial_amount);
-        settlement.amount -= partial_amount;
-        settlement.status = if settlement.amount == 0 {
-            SettlementStatus::Executed
-        } else {
-            SettlementStatus::PartiallySettled
-        };
-            .unwrap_or_else(|| panic!("SettlementNotFound"));
-        if settlement.status != SettlementStatus::Pending {
-            panic!("AlreadyExecuted");
-        }
-        settlement.status = SettlementStatus::Cancelled;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Settlement(settlement_id), &settlement);
-        env.events().publish(
-            (Symbol::new(&env, "settlement_partial"), settlement_id),
-            settlement.clone(),
-        );
-        settlement
-            (Symbol::new(&env, "settlement_cancelled"), settlement_id),
-            settlement,
-        );
-    }
-
     pub fn get_pending_settlements(env: Env) -> Vec<Settlement> {
         let count: u64 = env
             .storage()
@@ -318,10 +262,6 @@ impl TreasuryContract {
             if let Some(settlement) = env
                 .storage()
                 .persistent()
-                .get(&DataKey::Settlement(id))
-                .unwrap();
-            if settlement.status != SettlementStatus::Executed {
-                pending.push_back(settlement);
                 .get::<DataKey, Settlement>(&DataKey::Settlement(id))
             {
                 if settlement.status == SettlementStatus::Pending {
@@ -333,13 +273,6 @@ impl TreasuryContract {
         pending
     }
 
-    pub fn update_threshold(env: Env, admin: Address, new_threshold: u32) {
-        Self::require_admin(&env, &admin);
-        env.storage()
-            .instance()
-            .set(&DataKey::Threshold, &new_threshold);
-        env.events()
-            .publish((Symbol::new(&env, "threshold_updated"),), new_threshold);
     pub fn get_pending_settlements_page(env: Env, start: u64, limit: u64) -> Vec<Settlement> {
         let count: u64 = env
             .storage()

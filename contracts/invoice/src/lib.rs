@@ -123,6 +123,7 @@ impl InvoiceContract {
         Ok(invoice.status)
     }
 
+    // Issue #49: merchant or admin may cancel a pending invoice
     pub fn cancel_invoice(env: Env, caller: Address, id: u64) -> Result<(), InvoiceError> {
         caller.require_auth();
         require_not_paused(&env)?;
