@@ -7,7 +7,7 @@
     "mark_paids",
     "get_invoice",
     "get_invoice_status",
-    "cancel_invoice",
+    "cancel_invoiced",
     "request_refund",
     "batch_expire",
     "pause",
