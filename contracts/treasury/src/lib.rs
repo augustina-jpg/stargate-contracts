@@ -6,10 +6,34 @@ mod settlement;
 pub use multisig::{
     DataKey, Dispute, DisputeStatus, RotationStatus, Settlement, SettlementHoldReason,
     SettlementStatus, SignerRotationProposal, TreasuryError,
+    DataKey, Dispute, DisputeStatus, RotationStatus, Settlement, SettlementHoldReason, SettlementStatus,
+    SignerRotationProposal, TreasuryError,
 };
 
 use settlement::{require_authorized_signer, signer_weight};
 use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol, Vec};
+
+impl TreasuryError {
+    fn panic(&self) -> ! {
+        match self {
+            TreasuryError::AlreadyInitialized => panic!("AlreadyInitialized"),
+            TreasuryError::ZeroThreshold => panic!("ZeroThreshold"),
+            TreasuryError::SettlementNotFound => panic!("SettlementNotFound"),
+            TreasuryError::AlreadyExecuted => panic!("AlreadyExecuted"),
+            TreasuryError::ThresholdNotMet => panic!("ThresholdNotMet"),
+            TreasuryError::ThresholdNotConfigured => panic!("ThresholdNotConfigured"),
+            TreasuryError::InvalidAmount => panic!("InvalidAmount"),
+            TreasuryError::ContractPaused => panic!("ContractPaused"),
+            TreasuryError::Unauthorized => panic!("Unauthorized"),
+            TreasuryError::UnauthorizedSigner => panic!("UnauthorizedSigner"),
+            TreasuryError::InvalidTokenContract => panic!("InvalidTokenContract"),
+            TreasuryError::TokenNotAllowed => panic!("TokenNotAllowed"),
+            TreasuryError::RotationNotFound => panic!("RotationNotFound"),
+            TreasuryError::RotationAlreadyExecuted => panic!("RotationAlreadyExecuted"),
+            TreasuryError::SettlementOnHold => panic!("SettlementOnHold"),
+        }
+    }
+}
 
 #[contract]
 pub struct TreasuryContract;
