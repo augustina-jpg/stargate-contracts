@@ -4,7 +4,7 @@
   "functions": [
     "initialize",
     "create_invoice",
-    "mark_paid",
+    "mark_paids",
     "get_invoice",
     "get_invoice_status",
     "cancel_invoice",
